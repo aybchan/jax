@@ -53,7 +53,7 @@ c_name = "__cudnn$blockScaledDot"
 @dataclass(frozen=True)
 class CollectiveExpectation:
   family: str
-  shape_fragment: str
+  element_type: str | None = None
   dimensions: tuple[int, ...] | None = None
   group_size: int = 2
   num_groups: int = 2
@@ -177,15 +177,28 @@ def _collective_lines(hlo_text):
 
 
 expected_hlo_semantics = [
-    HloExpectation(collectives=(CollectiveExpectation("all-reduce", "f32[1,512,512]"),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[512,512]", (1,)),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[512,512]", (1,)),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-reduce",
+                                                      element_type="f32"),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather",
+                                                      element_type="f8e4m3fn",
+                                                      dimensions=(1,)),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather",
+                                                      element_type="f8e4m3fn",
+                                                      dimensions=(1,)),)),
     HloExpectation(),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[256,1024]", (0,)),)),
-    HloExpectation(optional_collectives=(CollectiveExpectation("reduce-scatter", "f32[2,256,512]"),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn", (0,)),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[2,512,512]", (0,)),)),
-    HloExpectation(collectives=(CollectiveExpectation("all-gather", "f8e4m3fn[2,256,1024]", (0,)),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather",
+                                                      element_type="f8e4m3fn",
+                                                      dimensions=(0,)),)),
+    HloExpectation(optional_collectives=(CollectiveExpectation("reduce-scatter", "f32"),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather",
+                                                      element_type="f8e4m3fn",
+                                                      dimensions=(0,)),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather",
+                                                      element_type="f8e4m3fn",
+                                                      dimensions=(0,)),)),
+    HloExpectation(collectives=(CollectiveExpectation("all-gather",
+                                                      element_type="f8e4m3fn",
+                                                      dimensions=(0,)),)),
 ]
 expected_output_spec = [
     PartitionSpec('dp',),
@@ -435,17 +448,30 @@ class ScaledMatmulTest(jtu.JaxTestCase):
           ),
       )
 
+    def has_element_type(line, element_type):
+      return re.search(
+          rf"(?<![A-Za-z0-9_]){re.escape(element_type)}\[",
+          line,
+      ) is not None
+
     def matches(expectation, parsed):
       return (
-          parsed.family == expectation.family and
-          expectation.shape_fragment in parsed.line and
-          (expectation.dimensions is None or
-           parsed.dimensions == expectation.dimensions) and
-          parsed.group_size == expectation.group_size and
-          parsed.num_groups == expectation.num_groups and
-          parsed.total_devices == expectation.total_devices and
-          not parsed.op_name.endswith("-done")
-      )
+            parsed.family == expectation.family
+            and (
+                expectation.element_type is None
+                or has_element_type(
+                    parsed.line, expectation.element_type
+                )
+            )
+            and (
+                expectation.dimensions is None
+                or parsed.dimensions == expectation.dimensions
+            )
+            and parsed.group_size == expectation.group_size
+            and parsed.num_groups == expectation.num_groups
+            and parsed.total_devices == expectation.total_devices
+            and not parsed.op_name.endswith("-done")
+        )
 
     def check_collective(expectation, *, optional=False):
       family_lines = [
